@@ -2,21 +2,36 @@
 (require 'json)
 (random t)
 
-(define-derived-mode bigquery-mode nil "Text"
-  "Major mode for editing text written for humans to read.
-In this mode, paragraphs are delimited only by blank or white lines.
-You can thus get the full benefit of adaptive filling
- (see the variable `adaptive-fill-mode').
-\\{text-mode-map}
-Turning on Text mode runs the normal hook `text-mode-hook'."
-  (set (make-local-variable 'text-mode-variant) t)
-  (set (make-local-variable 'require-final-newline)
-       mode-require-final-newline)
-  (set (make-local-variable 'indent-line-function) 'indent-relative))
+(defvar bigquery-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") 'bigquery-send-paragraph) map)
+  "Keymap for BQ mode")
+
+
+(define-derived-mode bigquery-mode sql-mode "Big Query")
 
 (defvar bigquery-google-auth-url "https://accounts.google.com/o/oauth2/v2/auth")
 (defvar bigquery-google-token-url "https://www.googleapis.com/oauth2/v4/token")
 (defvar bigquery-scopes "https://www.googleapis.com/auth/bigquery")
+
+
+(defun bigquery-send-paragraph ()
+  "Send the current paragraph to Big Query"
+  (interactive)
+  (let ((start (save-excursion
+                 (backward-paragraph)
+                 (point)))
+        (end (save-excursion
+               (forward-paragraph)
+               (point))))
+    (bigquery-send-region start end)))
+
+(defun bigquery-send-region (start end)
+  "Send a region to Big Query"
+  (interactive "r")
+  (bigquery-query (replace-regexp-in-string "\n" " "  (buffer-substring-no-properties start end))))
+;(bigquery-query (buffer-substring-no-properties start end))
+  
 
 (defun bigquery-token  ()
   "Call the big query shizzle"
@@ -61,7 +76,6 @@ Turning on Text mode runs the normal hook `text-mode-hook'."
       (re-search-forward "^$" nil 'move)
       (setq json (buffer-substring-no-properties (point) (point-max)))
       (kill-buffer (current-buffer)))
-    (print json)
     json))
 
 (defun bigquery-list-tables (dataset)
@@ -153,4 +167,5 @@ Turning on Text mode runs the normal hook `text-mode-hook'."
          (jobid (cdr (assoc 'jobId (cdr (assoc 'jobReference json-object))))))
     (bigquery-check-job jobid)
     (bigquery-get-query-results jobid)))
+
 
