@@ -109,9 +109,12 @@ then get them all and turn into a big list"
       (setq json (cons (json-read-from-string (buffer-substring-no-properties (point) (point-max))) forward))
       (kill-buffer (current-buffer)))
     (let ((all-data (car json)))
-      (if (assoc 'nextPageToken all-data)
-          (bigquery-get-json url nil nil (cdr (assoc 'nextPageToken all-data)) json  )  
+      (if (and  (assoc 'nextPageToken all-data)
+                (or (not (eq (assoc 'state  (assoc 'status all-data)) "RUNNING"))
+                    (not (assoc 'message (assoc 'errorResult  (assoc 'status all-data))) "ERROR")))
+                 (bigquery-get-json url nil nil (cdr (assoc 'nextPageToken all-data)) json)
         json))))
+
 
 (defun bigquery-list-tables (dataset)
   "List all tables in a dataset"
@@ -167,38 +170,42 @@ then get them all and turn into a big list"
   (let* ((json-object
           (bigquery-get-json
            (bigquery-url-builder (concat "queries/" jobid))))
-         (buffer (get-buffer-create "*BQ Results*"))
-         (fields (cdr (assoc 'fields (cdr (assoc 'schema json-object)))))
-         (data (cdr (assoc 'rows json-object))))
+         (buffer (get-buffer-create "*BQ Results*")))
     (set-buffer buffer)
-    (delete-region (point-min) (point-max))
-    (for-each field fields 
-              (insert (format "%s," (cdr (assoc 'name field)))))
-    (newline)
-    (for-each row data
-              (for-each col (cdar row)
-                        (insert (format "%s," (cdar col))))
-              (newline))))
+    (delete-region (point-min) (point-max))    
+    (dotimes (i (length json-object))
+             (let ((page (elt json-object i)))
+               (let ((fields (cdr (assoc 'fields (cdr (assoc 'schema page)))))
+                     (data (cdr (assoc 'rows page))))
+                 
+                 (for-each field fields 
+                           (insert (format "%s," (cdr (assoc 'name field)))))
+                 (newline)
+                 (for-each row data
+                           (for-each col (cdar row)
+                                     (insert (format "%s," (cdar col))))
+                           (newline)))))))
 
 
 (defun bigquery-query (query)
   "Execute a query on bigquery"
   (let* ((json-object
-          (bigquery-get-json
-           (bigquery-url-builder (concat "jobs"))
-           "POST"
-           (format  (json-encode
-                     '(:kind "bigquery#job"
+          (car (bigquery-get-json
+                (bigquery-url-builder (concat "jobs"))
+                "POST"
+                (format  (json-encode
+                          '(:kind "bigquery#job"
 
-                             :configuration (:query
-                                             (:destinationTable
-                                              (:projectId %s
-                                                          :datasetId "tmp"
-                                                          :tableId %s)
-                                              :defaultDataset "tmp"
-                                              :query %s)))) bigquery-project-id (bigquery-crap-uuid) query)))
+                                  :configuration (:query
+                                                  (:destinationTable
+                                                   (:projectId %s
+                                                               :datasetId "tmp"
+                                                               :tableId %s)
+                                                   :defaultDataset "tmp"
+                                                   :query %s)))) bigquery-project-id (bigquery-crap-uuid) query))))
          (jobid (cdr (assoc 'jobId (cdr (assoc 'jobReference json-object))))))
-    (bigquery-check-job jobid)
-    (bigquery-get-query-results jobid)))
+    (if jobid
+        (progn (bigquery-check-job jobid)
+               (bigquery-get-query-results jobid)))))
 
 
