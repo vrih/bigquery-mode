@@ -25,14 +25,14 @@
 stored in your init file and could be dangerous"
   :type 'string
   :group 'BIGQUERY
-  :risky t)
+  :safe 'stringp)
 
 (defcustom bigquery-client-secret ""
   "Client Secret from Google Cloud API setup. This value will be
   stored in your init file and could be dangerous."
   :type 'string
   :group 'BIGQUERY
-  :safe 'stringp)
+  :risky t)
 
 (defcustom bigquery-project-id ""
   "Google Cloud project ID"
