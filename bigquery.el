@@ -1,5 +1,6 @@
 (require 'oauth2)
 (require 'json)
+(require 'helm)
 (random t)
 
 (defvar bigquery-mode-map
@@ -59,9 +60,7 @@ stored in your init file and could be dangerous"
   "Send a region to Big Query"
   (interactive "r")
   (bigquery-query
-   (replace-regexp-in-string
-    "\n" " "
-    (buffer-substring-no-properties start end))))
+   (replace-regexp-in-string "\n" " " (buffer-substring-no-properties start end))))
 ;(bigquery-query (buffer-substring-no-properties start end))
 
 (defun bigquery-token  ()
@@ -100,7 +99,7 @@ then get them all and turn into a big list"
             (bigquery-token)
             (if nextpagetoken
                 (concat  url "?pageToken=" nextpagetoken)
-              (concat url "?maxReulst=1000")))))
+              (concat url "?maxResults=1000")))))
         (json nil))
     (save-excursion
       (set-buffer buffer)
@@ -116,28 +115,47 @@ then get them all and turn into a big list"
         json))))
 
 
-(defun bigquery-list-tables (dataset)
-  "List all tables in a dataset"
-  (interactive "M Dataset:")
-  
+(defun bigquery/get-list (url-path set-name set-id set-reference)
+  "Print a list of elements one by one to a buffer"
   (let ((json-object 
          (bigquery-get-json
-          (bigquery-url-builder
-           (concat "datasets/" dataset "/tables"))))
-        (buffer (get-buffer-create "*Big Query*")))
+          (bigquery-url-builder (concat  url-path)))))
+    (print (format "%s" json-object))
+    (mapcan (lambda (x)
+              (let ((data (cdr (assoc set-name x))))
+                (mapcar (lambda (y)
+                          (cdr (assoc set-id (cdr (assoc set-reference y))))) data)))
+            json-object)))
+
+(defun bigquery/get-list-to-buffer (url-path buffer-name set-name set-id set-reference)
+  "Print a list of elements one by one to a buffer"
+  (let ((results (bigquery/get-list url-path set-name set-id set-reference))
+        (buffer (get-buffer-create buffer-name)))
     (set-buffer buffer)
     (delete-region (point-min) (point-max))
-    (dotimes (i (length json-object))
-      (let ((page (elt json-object i)))
-        (let ((data (cdr (assoc 'tables page))))
-          (dotimes (i (length data))
-            (let ((datum (elt data i)))
-              (insert (format "%s"
-                              (cdr
-                               (assoc 'tableId
-                                      (cdr (assoc 'tableReference datum))))))
-              (newline)))))))
-  (sort-lines nil (point-min) (point-max)))
+    (mapc (lambda (x)
+            (insert (format "%s" x))
+            (newline))
+          results)
+  (sort-lines nil (point-min) (point-max))))
+
+(defun bigquery/list-datasets ()
+  "List all tables in a dataset"
+  (interactive)
+  (bigquery/get-list-to-buffer "datasets"
+                               "*Big Query: Datasets*"
+                               'datasets
+                               'datasetId
+                               'datasetReference))
+
+(defun bigquery/list-tables (dataset)
+  "List all tables in a dataset"
+  (interactive "M Dataset:")
+  (bigquery/get-list-to-buffer (concat "datasets/" dataset "/tables")
+                               (concat "*Big Query: " dataset "*")
+                               'tables
+                               'tableId
+                               'tableReference))
 
 (defun bigquery-crap-uuid ()
   "Generate sloppy uuid from xah lee"
@@ -160,11 +178,6 @@ then get them all and turn into a big list"
           (sleep-for 10)
           (bigquery-check-job jobid)))))
 
-(defmacro for-each (item list &rest body)
-  `(dotimes (i (length ,list))
-    (let* ((,item (elt ,list i)))
-      ,@body)))
-
 (defun bigquery-get-query-results (jobid)
   "Get the first page of results from Big Query"
   (let* ((json-object
@@ -172,20 +185,18 @@ then get them all and turn into a big list"
            (bigquery-url-builder (concat "queries/" jobid))))
          (buffer (get-buffer-create "*BQ Results*")))
     (set-buffer buffer)
-    (delete-region (point-min) (point-max))    
-    (dotimes (i (length json-object))
-             (let ((page (elt json-object i)))
-               (let ((fields (cdr (assoc 'fields (cdr (assoc 'schema page)))))
-                     (data (cdr (assoc 'rows page))))
-                 
-                 (for-each field fields 
-                           (insert (format "%s," (cdr (assoc 'name field)))))
-                 (newline)
-                 (for-each row data
-                           (for-each col (cdar row)
-                                     (insert (format "%s," (cdar col))))
-                           (newline)))))))
-
+    (delete-region (point-min) (point-max))
+    (mapc (lambda (x)
+            (let ((fields (cdr (assoc 'fields (cdr (assoc 'schema x)))))
+                  (data (cdr (assoc 'rows x))))
+              (mapc (lambda (field) (insert (format "%s," (cdr (assoc 'name field))))) fields)
+              (newline)
+              (mapc (lambda (row)
+                      (mapc (lambda (col)
+                              (insert (format "%s," (cdar col))))
+                            (cdar row)) 
+                      (newline))
+                    data))) json-object)))
 
 (defun bigquery-query (query)
   "Execute a query on bigquery"
@@ -208,4 +219,49 @@ then get them all and turn into a big list"
         (progn (bigquery-check-job jobid)
                (bigquery-get-query-results jobid)))))
 
+(defun bigquery/list-tables-helm (candidate)
+  (bigquery/get-list (concat "datasets/" candidate "/tables")
+                     'tables
+                     'tableId
+                     'tableReference))
 
+(defun bigquery/list-datasets-helm ()
+  (bigquery/get-list "datasets"
+                     'datasets
+                     'datasetId
+                     'datasetReference))
+
+(defun helm-bigquery-insert-tables (candidate)
+  (insert (format "%s" candidate)))
+
+(defvar helm-bigquery-dataset-actions
+  (helm-make-actions
+   "Open dataset"              #'helm-bigquery-view-tables))
+
+(defvar helm-source-bigquery-tables
+    '((name . "Big Query Tables")
+      (action . ("Insert table name" . helm-bigquery-insert-tables))
+      (candidates-process . bigquery/list-tables-helm)
+      (action-transformer . nil)))
+
+(defun helm-bigquery-view-tables (candidate)
+  "Insert big query table name at current location"
+  (message candidate)
+  (helm :sources     '((name . "Big Query Tables")
+                       (action . (("Insert table name" . helm-bigquery-insert-tables)))
+                       (candidates . (lambda () (mapcar (lambda (x) (concat candidate "." x)) (bigquery/list-tables-helm candidate))))
+      (action-transformer . nil))
+	:buffer "*helm-bigquery*"))
+
+
+(defvar helm-source-bigquery-datasets
+    '((name . "Big Query")
+      (action . helm-bigquery-dataset-actions)
+    (candidates-process . bigquery/list-datasets-helm)
+    (action-transformer . nil)))
+
+(defun helm-bigquery ()
+  "Bring up a Spotify search interface in helm."
+  (interactive)
+  (helm :sources '(helm-source-bigquery-datasets)
+	:buffer "*helm-bigquery*"))
